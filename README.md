@@ -86,6 +86,61 @@ Authorization: Bearer <access_token>
 - Points: `+10` for playing, `+100` bonus on a win. Streak increments on a
   win, resets to 0 on a loss.
 
+## Deploying to Render
+
+This repo includes a `render.yaml` Blueprint that provisions both the web
+service and a managed Postgres database in one go, with the connection
+string and a random JWT secret wired automatically.
+
+### Easiest path — Blueprint
+
+1. Push this repo to GitHub (already done if you're reading this on
+   `ANVSOFTSOLUTIONS/gold_game_backend`).
+2. In the Render dashboard, click **New +** → **Blueprint**.
+3. Connect the `gold_game_backend` GitHub repo. Render reads `render.yaml`
+   and shows you a preview: one **web service** (`gold-game-backend`) and
+   one **Postgres database** (`gold-game-db`), both on the free plan.
+4. Click **Apply**. Render creates the database first, then builds and
+   deploys the web service with `DATABASE_URL` and `JWT_SECRET` already
+   filled in — you don't type either of those in yourself.
+5. Wait for the build to finish (first build installs Python + all
+   dependencies, a few minutes). Your API is live at the `.onrender.com`
+   URL shown on the service page — check `/health` and `/docs`.
+
+### Manual path (if you'd rather use "New Web Service" directly)
+
+1. **New +** → **PostgreSQL** first. Name it anything, free plan is fine.
+   Once it's created, copy its **Internal Database URL**.
+2. **New +** → **Web Service** → connect the `gold_game_backend` repo.
+   - **Runtime**: Python 3
+   - **Build Command**: `pip install -r requirements.txt`
+   - **Start Command**: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+3. Under **Environment**, add these variables (copy from `.env.example`):
+   `DATABASE_URL` (the Internal Database URL from step 1 — SQLAlchemy
+   accepts Render's plain `postgresql://` string as-is), `JWT_SECRET` (a
+   long random string — don't reuse the placeholder), `JWT_ALGORITHM`,
+   `JWT_EXPIRE_MINUTES`, `ROUND_LENGTH_SECONDS`, `PAYOUT_MULTIPLIER`,
+   `OTP_EXPIRE_SECONDS`, `DEBUG`.
+4. Click **Create Web Service**. Same result as the Blueprint, just
+   assembled by hand.
+
+### Before this handles real users or real money
+
+- **No SMS provider is wired up** — right now `DEBUG=true` echoes the OTP
+  back in the API response (`dev_otp`) so signup/login work without one.
+  That's fine for testing but means anyone can read anyone else's OTP from
+  the API response. Plug in Twilio/MSG91 (or similar) inside `_issue_otp()`
+  in `app/routers/auth.py`, then set `DEBUG=false`.
+- **The frontend's auth screen no longer has an OTP step** (it was removed
+  for a simpler signup flow) — so as-is, the deployed API and the current
+  frontend don't fully line up yet. Wiring the frontend to call this API
+  will need either an OTP input added back, or the frontend auto-submitting
+  `dev_otp` from the signup response (fine for a demo, not for production).
+- Render's free Postgres plan **expires after a set period** and free web
+  services **spin down when idle** (the next request wakes it up after a
+  short delay) — expect that on the free tier; upgrade the plans in the
+  Render dashboard when you're ready for something that stays warm.
+
 ## Not done yet (flagged on purpose)
 
 - No real payment gateway — `/wallet/add` and `/wallet/withdraw` move
