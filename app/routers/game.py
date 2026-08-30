@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from pymongo.database import Database
 
 from .. import models, schemas
 from ..deps import get_current_user, get_db
@@ -11,64 +11,80 @@ router = APIRouter(prefix="/game", tags=["game"])
 
 
 @router.get("/current-round", response_model=schemas.RoundOut)
-def current_round(db: Session = Depends(get_db)):
+def current_round(db: Database = Depends(get_db)):
     round_ = get_or_create_open_round(db)
-    remaining = max(0, int((round_.closes_at - datetime.utcnow()).total_seconds()))
+    remaining = max(0, int((round_["closes_at"] - datetime.utcnow()).total_seconds()))
     return schemas.RoundOut(
-        id=round_.id,
-        status=round_.status.value,
+        id=str(round_["_id"]),
+        status=round_["status"],
         seconds_remaining=remaining,
-        drawn_number=round_.drawn_number,
+        drawn_number=round_["drawn_number"],
     )
 
 
 @router.post("/bets", response_model=schemas.BetOut, status_code=status.HTTP_201_CREATED)
 def place_bet(
     payload: schemas.PlaceBetRequest,
-    db: Session = Depends(get_db),
-    user: models.User = Depends(get_current_user),
+    db: Database = Depends(get_db),
+    user: dict = Depends(get_current_user),
 ):
     round_ = get_or_create_open_round(db)
-    if round_.status != models.RoundStatus.open:
+    if round_["status"] != models.RoundStatus.open.value:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Round is closed, wait for the next one")
 
     total = payload.stake * len(payload.picks)
-    wallet = user.wallet
-    if float(wallet.balance) < total:
+    wallet = db.wallets.find_one({"user_id": user["_id"]})
+    if float(wallet["balance"]) < total:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Insufficient balance")
 
-    wallet.balance = float(wallet.balance) - total
-    wallet.playable = max(0.0, float(wallet.playable) - total)
+    db.wallets.update_one(
+        {"user_id": user["_id"]},
+        {
+            "$inc": {"balance": -total},
+            "$set": {"playable": max(0.0, float(wallet["playable"]) - total)},
+        },
+    )
 
-    bet = models.Bet(
-        round_id=round_.id,
-        user_id=user.id,
-        picks=payload.picks,
-        stake=payload.stake,
-        total_amount=total,
+    bet = {
+        "round_id": round_["_id"],
+        "user_id": user["_id"],
+        "picks": payload.picks,
+        "stake": payload.stake,
+        "total_amount": total,
+        "settled": False,
+        "won": False,
+        "payout": 0.0,
+        "created_at": datetime.utcnow(),
+    }
+    result = db.bets.insert_one(bet)
+    bet["_id"] = result.inserted_id
+
+    db.transactions.insert_one(
+        {
+            "user_id": user["_id"],
+            "type": models.TxnType.bet.value,
+            "label": f"Bet placed · {len(payload.picks)} numbers",
+            "amount": total,
+            "positive": False,
+            "created_at": datetime.utcnow(),
+        }
     )
-    db.add(bet)
-    db.add(
-        models.Transaction(
-            user_id=user.id,
-            type=models.TxnType.bet,
-            label=f"Bet placed · {len(payload.picks)} numbers",
-            amount=total,
-            positive=False,
-        )
+
+    return schemas.BetOut(
+        id=str(bet["_id"]),
+        round_id=str(bet["round_id"]),
+        picks=bet["picks"],
+        stake=bet["stake"],
+        total_amount=bet["total_amount"],
+        settled=bet["settled"],
+        won=bet["won"],
+        payout=bet["payout"],
     )
-    db.commit()
-    db.refresh(bet)
-    return bet
 
 
 @router.get("/last-draws", response_model=schemas.LastDrawsOut)
-def last_draws(db: Session = Depends(get_db)):
-    rounds = (
-        db.query(models.Round)
-        .filter(models.Round.status == models.RoundStatus.drawn)
-        .order_by(models.Round.id.desc())
-        .limit(6)
-        .all()
+def last_draws(db: Database = Depends(get_db)):
+    rounds = list(
+        db.rounds.find({"status": models.RoundStatus.drawn.value}).sort("_id", -1).limit(6)
     )
-    return schemas.LastDrawsOut(draws=[r.drawn_number for r in rounds])
+    return schemas.LastDrawsOut(draws=[r["drawn_number"] for r in rounds])

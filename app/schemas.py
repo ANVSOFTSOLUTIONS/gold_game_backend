@@ -53,7 +53,7 @@ class WithdrawRequest(BaseModel):
 
 
 class TransactionOut(BaseModel):
-    id: int
+    id: str
     type: str
     label: str
     amount: float
@@ -82,8 +82,8 @@ class PlaceBetRequest(BaseModel):
 
 
 class BetOut(BaseModel):
-    id: int
-    round_id: int
+    id: str
+    round_id: str
     picks: List[int]
     stake: float
     total_amount: float
@@ -95,7 +95,7 @@ class BetOut(BaseModel):
 
 
 class RoundOut(BaseModel):
-    id: int
+    id: str
     status: str
     seconds_remaining: int
     drawn_number: Optional[int] = None

@@ -12,14 +12,15 @@ only. Ask for the rest whenever you're ready to add them.
 ## Stack
 
 - FastAPI + Pydantic v2
-- SQLAlchemy 2.0 (sync) + PostgreSQL
+- PyMongo (sync) + MongoDB
 - JWT auth (python-jose), OTP hashed with bcrypt (passlib)
 - A background `asyncio` task runs the shared round clock (draw + payout)
   automatically every `ROUND_LENGTH_SECONDS`
 
 ## Setup
 
-1. Start Postgres (or point `DATABASE_URL` at one you already have):
+1. Start MongoDB (or point `DATABASE_URL` at one you already have, e.g. a
+   free MongoDB Atlas cluster):
    ```
    docker compose up -d
    ```
@@ -37,8 +38,8 @@ only. Ask for the rest whenever you're ready to add them.
    ```
    uvicorn app.main:app --reload
    ```
-5. Open the interactive docs at http://127.0.0.1:8000/docs — tables are
-   created automatically on startup, no migration step needed yet.
+5. Open the interactive docs at http://127.0.0.1:8000/docs — collections and
+   indexes are created automatically on startup, no migration step needed.
 
 ## Auth flow
 
@@ -88,36 +89,41 @@ Authorization: Bearer <access_token>
 
 ## Deploying to Render
 
-This repo includes a `render.yaml` Blueprint that provisions both the web
-service and a managed Postgres database in one go, with the connection
-string and a random JWT secret wired automatically.
+Render doesn't offer a managed MongoDB service, so this repo's `render.yaml`
+Blueprint provisions only the web service; you bring your own MongoDB
+connection string (a free [MongoDB Atlas](https://www.mongodb.com/cloud/atlas/register)
+cluster works well) and paste it in as `DATABASE_URL`. `JWT_SECRET` is still
+generated automatically.
 
 ### Easiest path — Blueprint
 
 1. Push this repo to GitHub (already done if you're reading this on
    `ANVSOFTSOLUTIONS/gold_game_backend`).
-2. In the Render dashboard, click **New +** → **Blueprint**.
-3. Connect the `gold_game_backend` GitHub repo. Render reads `render.yaml`
-   and shows you a preview: one **web service** (`gold-game-backend`) and
-   one **Postgres database** (`gold-game-db`), both on the free plan.
-4. Click **Apply**. Render creates the database first, then builds and
-   deploys the web service with `DATABASE_URL` and `JWT_SECRET` already
-   filled in — you don't type either of those in yourself.
-5. Wait for the build to finish (first build installs Python + all
+2. Create a free MongoDB Atlas cluster (or use any other MongoDB instance
+   reachable from the internet) and copy its connection string, e.g.
+   `mongodb+srv://user:pass@cluster.mongodb.net/gold_game`.
+3. In the Render dashboard, click **New +** → **Blueprint**.
+4. Connect the `gold_game_backend` GitHub repo. Render reads `render.yaml`
+   and shows you a preview: one **web service** (`gold-game-backend`) on
+   the free plan.
+5. When prompted for `DATABASE_URL`, paste the Atlas connection string from
+   step 2.
+6. Click **Apply**. Render builds and deploys the web service with
+   `DATABASE_URL` and a random `JWT_SECRET` wired in.
+7. Wait for the build to finish (first build installs Python + all
    dependencies, a few minutes). Your API is live at the `.onrender.com`
    URL shown on the service page — check `/health` and `/docs`.
 
 ### Manual path (if you'd rather use "New Web Service" directly)
 
-1. **New +** → **PostgreSQL** first. Name it anything, free plan is fine.
-   Once it's created, copy its **Internal Database URL**.
+1. Create a MongoDB Atlas cluster (or any reachable MongoDB instance) and
+   copy its connection string.
 2. **New +** → **Web Service** → connect the `gold_game_backend` repo.
    - **Runtime**: Python 3
    - **Build Command**: `pip install -r requirements.txt`
    - **Start Command**: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 3. Under **Environment**, add these variables (copy from `.env.example`):
-   `DATABASE_URL` (the Internal Database URL from step 1 — SQLAlchemy
-   accepts Render's plain `postgresql://` string as-is), `JWT_SECRET` (a
+   `DATABASE_URL` (the connection string from step 1), `JWT_SECRET` (a
    long random string — don't reuse the placeholder), `JWT_ALGORITHM`,
    `JWT_EXPIRE_MINUTES`, `ROUND_LENGTH_SECONDS`, `PAYOUT_MULTIPLIER`,
    `OTP_EXPIRE_SECONDS`, `DEBUG`.
@@ -136,17 +142,16 @@ string and a random JWT secret wired automatically.
   frontend don't fully line up yet. Wiring the frontend to call this API
   will need either an OTP input added back, or the frontend auto-submitting
   `dev_otp` from the signup response (fine for a demo, not for production).
-- Render's free Postgres plan **expires after a set period** and free web
-  services **spin down when idle** (the next request wakes it up after a
-  short delay) — expect that on the free tier; upgrade the plans in the
-  Render dashboard when you're ready for something that stays warm.
+- MongoDB Atlas's free (M0) tier and Render's free web services **spin down
+  or idle-throttle** — expect cold-start delays on both; upgrade when you're
+  ready for something that stays warm.
 
 ## Not done yet (flagged on purpose)
 
 - No real payment gateway — `/wallet/add` and `/wallet/withdraw` move
   numbers around directly, same as the current frontend mock.
 - No real SMS provider for OTP delivery.
-- No Alembic migrations — schema is created via `Base.metadata.create_all`
-  on startup. Fine for now, worth adding before this touches real data.
+- No schema migrations — MongoDB is schemaless and indexes are (re)created
+  on startup. Fine for now, worth revisiting if the data model grows.
 - Referral / rewards / leaderboard / KYC / support / notifications
   endpoints aren't built — say the word and I'll add them the same way.

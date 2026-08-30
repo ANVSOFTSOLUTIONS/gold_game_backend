@@ -4,14 +4,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .database import Base, engine
+from .database import init_indexes
 from .game_engine import round_loop
 from .routers import auth, game, wallet
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(bind=engine)
+    init_indexes()
     task = asyncio.create_task(round_loop())
     yield
     task.cancel()
